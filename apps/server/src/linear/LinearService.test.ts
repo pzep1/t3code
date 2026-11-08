@@ -164,7 +164,7 @@ it.effect("rejects unsuccessful mutations and malformed API answers", () => {
 
 it.effect("loads every directory page and rejects a repeated cursor", () => {
   let calls = 0;
-  const state = { id: "state", name: "Todo", color: "#888", type: "unstarted" };
+  const state = { id: "state", name: "Todo", color: "#888", type: "unstarted", position: 1 };
   const label = { id: "label", name: "Bug", color: "#f00" };
   return Effect.gen(function* () {
     const service = yield* Linear.LinearService;
@@ -188,6 +188,41 @@ it.effect("loads every directory page and rejects a repeated cursor", () => {
               items: {
                 nodes,
                 pageInfo: { hasNextPage: calls === 1 || calls > 5, endCursor: "cursor" },
+              },
+            },
+          },
+        });
+      }),
+    ),
+  );
+});
+
+it.effect("orders workflow columns by group and configured position across directory pages", () => {
+  let calls = 0;
+  const states = [
+    { id: "review", name: "In Review", type: "started", position: 1002 },
+    { id: "done", name: "Done", type: "completed", position: 3 },
+    { id: "progress", name: "In Progress", type: "started", position: 2 },
+    { id: "todo", name: "Todo", type: "unstarted", position: 1 },
+  ].map((state) => ({ ...state, color: "#888" }));
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const context = yield* service.teamContext({ id: "team" });
+    assert.deepEqual(
+      context.states.map((state) => state.name),
+      ["Todo", "In Progress", "In Review", "Done"],
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() => {
+        calls++;
+        return Response.json({
+          data: {
+            result: {
+              items: {
+                nodes: calls === 1 ? states.slice(0, 2) : calls === 2 ? states.slice(2) : [],
+                pageInfo: { hasNextPage: calls === 1, endCursor: "cursor" },
               },
             },
           },

@@ -52,6 +52,21 @@ const decodeEnvelope = Schema.decodeUnknownEffect(Envelope);
 const decodeCredential = Schema.decodeEffect(Schema.fromJsonString(CredentialFile));
 const encodeCredential = Schema.encodeEffect(Schema.fromJsonString(CredentialFile));
 const decodeResult = Schema.decodeUnknownEffect(Schema.Struct({ result: Schema.Unknown }));
+const PositionedState = Schema.Struct({ ...L.LinearState.fields, position: Schema.Number });
+const stateGroups = [
+  "triage",
+  "backlog",
+  "planned",
+  "unstarted",
+  "started",
+  "completed",
+  "canceled",
+  "duplicate",
+];
+function stateGroup(type: string) {
+  const index = stateGroups.indexOf(type);
+  return index < 0 ? stateGroups.length : index;
+}
 const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
   const fs = yield* FileSystem.FileSystem;
@@ -196,6 +211,15 @@ const make = Effect.gen(function* () {
     } while (true);
     return result;
   });
+  const orderedStates = Effect.fn("LinearService.orderedStates")(function* (
+    field: string,
+    teamId?: string,
+  ) {
+    const states = yield* all(field, `${Q.stateFields} position`, PositionedState, teamId);
+    return states
+      .sort((a, b) => stateGroup(a.type) - stateGroup(b.type) || a.position - b.position)
+      .map(({ id, name, color, type }) => ({ id, name, color, type }));
+  });
   const workspace = Effect.fn("LinearService.workspace")(function* () {
     const base = yield* request(
       `{ result:organization { id name urlKey } }`,
@@ -205,13 +229,13 @@ const make = Effect.gen(function* () {
     const viewer = yield* request(`{ result:viewer { ${Q.personFields} } }`, {}, L.LinearPerson);
     const teams = yield* all("teams", Q.teamFields, L.LinearTeam);
     const users = yield* all("users", Q.personFields, L.LinearPerson);
-    const projectStatuses = yield* all("projectStatuses", Q.stateFields, L.LinearState);
+    const projectStatuses = yield* orderedStates("projectStatuses");
     return { organization: base, viewer, teams, users, projectStatuses };
   });
   const teamContext = Effect.fn("LinearService.teamContext")(function* ({
     id,
   }: typeof L.LinearIdInput.Type) {
-    const states = yield* all("states", Q.stateFields, L.LinearState, id);
+    const states = yield* orderedStates("states", id);
     const labels = yield* all("labels", "id name color", L.LinearLabel, id);
     const cycles = yield* all("cycles", Q.cycleFields, L.LinearCycle, id);
     const projects = yield* all("projects", Q.projectFields, L.LinearProjectSummary, id);
