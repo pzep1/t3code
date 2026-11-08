@@ -11,6 +11,8 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 
 const commands = vi.hoisted(() => ({ upload: vi.fn(), newThread: vi.fn() }));
+const confirmTrash = vi.hoisted(() => vi.fn());
+vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: confirmTrash }));
 vi.mock("../../hooks/useHandleNewThread", () => ({
   useNewThreadHandler: () => commands.newThread,
 }));
@@ -39,13 +41,15 @@ vi.mock("../../state/query", () => ({
     data:
       query === "documents"
         ? { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }
-        : query === "context"
-          ? { states: [], labels: [], cycles: [], projects: [] }
-          : query === "issue"
-            ? longIssue
-            : query === "project"
-              ? project
-              : null,
+        : query === "document"
+          ? { id: "doc", title: "Plan", content: "Keep this plan", trashed: false }
+          : query === "context"
+            ? { states: [], labels: [], cycles: [], projects: [] }
+            : query === "issue"
+              ? longIssue
+              : query === "project"
+                ? project
+                : null,
     error: null,
     isPending: false,
     refresh: () => {},
@@ -130,6 +134,28 @@ function pendingUpload() {
   );
   return () => complete(uploaded);
 }
+
+it("requires confirmation before moving a document to trash", async () => {
+  confirmTrash.mockReset().mockResolvedValue(false);
+  const mutate = vi.fn().mockResolvedValue({ success: true, id: null });
+  await using screen = await render(
+    <LinearDocuments
+      environmentId={environmentId}
+      search={{ view: "documents", team: "team", document: "doc" }}
+      change={vi.fn()}
+      mutate={mutate}
+      canWrite
+    />,
+  );
+  await screen.getByRole("button", { name: "Move to trash" }).click();
+  await vi.waitFor(() => expect(confirmTrash).toHaveBeenCalledOnce());
+  expect(mutate).not.toHaveBeenCalled();
+  confirmTrash.mockResolvedValue(true);
+  await screen.getByRole("button", { name: "Move to trash" }).click();
+  await vi.waitFor(() =>
+    expect(mutate).toHaveBeenCalledExactlyOnceWith({ kind: "documentDelete", id: "doc" }),
+  );
+});
 
 it("does not append a finished upload to a different document draft", async () => {
   const finishUpload = pendingUpload();

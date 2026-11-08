@@ -72,6 +72,7 @@ export const LinearDocument = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
   content: Schema.NullOr(Schema.String),
+  trashed: Schema.NullOr(Schema.Boolean),
   updatedAt: Schema.String,
   url: Schema.String,
 });
@@ -122,6 +123,7 @@ export type LinearIssueDetail = typeof LinearIssueDetail.Type;
 export const LinearDocumentSummary = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
+  trashed: Schema.NullOr(Schema.Boolean),
   updatedAt: Schema.String,
   url: Schema.String,
 });
@@ -192,6 +194,7 @@ export const LinearDocumentsInput = Schema.Struct({
   teamId: optionalId,
   projectId: optionalId,
   after: optionalId,
+  includeArchived: Schema.optional(Schema.Boolean),
 });
 export const LinearDocumentPage = Schema.Struct({
   nodes: Schema.Array(LinearDocumentSummary),
@@ -268,6 +271,8 @@ export const LinearMutationInput = Schema.Union([
       "notificationArchive",
       "notificationUnarchive",
       "commentDelete",
+      "documentDelete",
+      "documentUnarchive",
       "issueRelationDelete",
       "attachmentDelete",
     ]),

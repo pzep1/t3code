@@ -299,9 +299,10 @@ const make = Effect.gen(function* () {
   const documents = Effect.fn("LinearService.documents")(
     (input: typeof L.LinearDocumentsInput.Type) =>
       request(
-        `query LinearDocuments($filter:DocumentFilter,$after:String) { result:documents(first:50,after:$after,filter:$filter,orderBy:updatedAt) { nodes { ${Q.documentSummaryFields} } ${Q.pageFields} } }`,
+        `query LinearDocuments($filter:DocumentFilter,$after:String,$archived:Boolean) { result:documents(first:50,after:$after,filter:$filter,includeArchived:$archived,orderBy:updatedAt) { nodes { ${Q.documentSummaryFields} } ${Q.pageFields} } }`,
         {
           after: input.after,
+          archived: input.includeArchived ?? false,
           filter: {
             ...(input.teamId ? { team: { id: { eq: input.teamId } } } : {}),
             ...(input.projectId ? { project: { id: { eq: input.projectId } } } : {}),

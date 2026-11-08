@@ -12,8 +12,8 @@ export const issueFields = `id identifier title url priority priorityLabel updat
   state { ${stateFields} } team { ${teamFields} } assignee { ${personFields} }
   project { id name } cycle { ${cycleFields} } labels { nodes { id name color } }`;
 export const commentFields = `id body createdAt updatedAt user { ${personFields} }`;
-export const documentSummaryFields = "id title updatedAt url";
-export const documentFields = "id title content updatedAt url";
+export const documentSummaryFields = "id title trashed updatedAt url";
+export const documentFields = "id title content trashed updatedAt url";
 export const issueDetailFields = `${issueFields} description branchName archivedAt creator { ${personFields} }
   parent { id identifier title } children(first:50) { nodes { ${issueFields} } ${pageFields} }
   comments(first:50) { nodes { ${commentFields} } ${pageFields} }

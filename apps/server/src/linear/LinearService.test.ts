@@ -273,6 +273,44 @@ it.effect("keeps paused project statuses between active and completed groups", (
   );
 });
 
+it.effect("includes trashed documents while preserving the library scope and cursor", () =>
+  Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const page = yield* service.documents({
+      projectId: "project",
+      teamId: "team",
+      after: "cursor",
+      includeArchived: true,
+    });
+    assert.equal(page.nodes[0]?.trashed, true);
+    assert.equal(page.pageInfo.endCursor, "next");
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer((_, request) => {
+        assert.equal(request.body._tag, "Uint8Array");
+        if (request.body._tag === "Uint8Array") {
+          const payload = JSON.parse(new TextDecoder().decode(request.body.body));
+          assert.include(payload.query, "includeArchived:$archived");
+          assert.deepEqual(payload.variables, {
+            after: "cursor",
+            archived: true,
+            filter: { team: { id: { eq: "team" } }, project: { id: { eq: "project" } } },
+          });
+        }
+        return Response.json({
+          data: {
+            result: {
+              nodes: [{ id: "doc", title: "Plan", trashed: true, updatedAt: "today", url: "url" }],
+              pageInfo: { hasNextPage: true, endCursor: "next" },
+            },
+          },
+        });
+      }),
+    ),
+  ),
+);
+
 it("combines user, team, project and search filters without interpolating query text", () => {
   assert.deepEqual(
     linearIssueFilter(

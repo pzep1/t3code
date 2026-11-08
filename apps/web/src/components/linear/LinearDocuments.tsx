@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useRef, useState } from "react";
+import { requestConfirmDialog } from "../../confirmDialog";
 import { linearEnvironment } from "../../state/linear";
 import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";
@@ -27,12 +28,15 @@ export function LinearDocuments({
   projectId?: string;
 }) {
   const [cursors, setCursors] = useState<Array<string>>([]);
+  const [includeTrashed, setIncludeTrashed] = useState(false);
+  const [changingTrash, setChangingTrash] = useState(false);
   const after = cursors.at(-1);
   const documents = useEnvironmentQuery(
     linearEnvironment.documents({
       environmentId,
       input: {
         ...(after ? { after } : {}),
+        includeArchived: includeTrashed,
         ...(projectId ? { projectId } : search.team ? { teamId: search.team } : {}),
       },
     }),
@@ -51,6 +55,23 @@ export function LinearDocuments({
     content: string;
   } | null>(null);
   const [preview, setPreview] = useState(false);
+  const changeTrash = async () => {
+    const document = selected.data;
+    if (!document || !canWrite || changingTrash) return;
+    setChangingTrash(true);
+    const confirmed =
+      document.trashed ||
+      (await requestConfirmDialog(
+        `Move “${document.title}” to trash? You can restore it from this document library.`,
+        { variant: "destructive" },
+      ));
+    if (confirmed)
+      await mutate({
+        kind: document.trashed ? "documentUnarchive" : "documentDelete",
+        id: document.id,
+      });
+    setChangingTrash(false);
+  };
   return (
     <>
       <ScrollArea scrollbarGutter>
@@ -79,6 +100,17 @@ export function LinearDocuments({
               New document
             </Button>
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includeTrashed}
+              onChange={(event) => {
+                setIncludeTrashed(event.target.checked);
+                setCursors([]);
+              }}
+            />
+            Include trashed documents
+          </label>
           {!search.team && !projectId && (
             <p className="text-xs text-muted-foreground">Select a team to create a document.</p>
           )}
@@ -185,10 +217,13 @@ export function LinearDocuments({
                 <h2 className="min-w-0 flex-1 text-xl font-semibold max-sm:basis-full">
                   {selected.data.title}
                 </h2>
+                {selected.data.trashed && (
+                  <span className="text-sm text-muted-foreground">In trash</span>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!canWrite}
+                  disabled={!canWrite || changingTrash || selected.data.trashed === true}
                   onClick={() => {
                     if (selected.data) {
                       setEditor({
@@ -203,6 +238,18 @@ export function LinearDocuments({
                   }}
                 >
                   Edit document
+                </Button>
+                <Button
+                  size="sm"
+                  variant={selected.data.trashed ? "outline" : "destructive"}
+                  disabled={!canWrite || changingTrash}
+                  onClick={() => void changeTrash()}
+                >
+                  {changingTrash
+                    ? "Saving…"
+                    : selected.data.trashed
+                      ? "Restore document"
+                      : "Move to trash"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => change({ document: undefined })}>
                   Close
@@ -225,6 +272,7 @@ export function LinearDocuments({
               }}
             >
               <strong className="text-sm">{doc.title}</strong>
+              {doc.trashed && <span className="ml-2 text-xs text-muted-foreground">In trash</span>}
               <p className="mt-1 text-xs text-muted-foreground">
                 Updated {new Date(doc.updatedAt).toLocaleDateString()}
               </p>
