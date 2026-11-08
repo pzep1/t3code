@@ -59,6 +59,7 @@ const stateGroups = [
   "planned",
   "unstarted",
   "started",
+  "paused",
   "completed",
   "canceled",
   "duplicate",

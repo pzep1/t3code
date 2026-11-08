@@ -232,6 +232,47 @@ it.effect("orders workflow columns by group and configured position across direc
   );
 });
 
+it.effect("keeps paused project statuses between active and completed groups", () => {
+  const statuses = [
+    { id: "done", name: "Completed", type: "completed", position: 0 },
+    { id: "paused-later", name: "On hold", type: "paused", position: 1000 },
+    { id: "canceled", name: "Canceled", type: "canceled", position: 0 },
+    { id: "started", name: "In Progress", type: "started", position: 0 },
+    { id: "paused", name: "Paused", type: "paused", position: 0 },
+    { id: "planned", name: "Planned", type: "planned", position: 0 },
+    { id: "backlog", name: "Backlog", type: "backlog", position: 0 },
+  ].map((status) => ({ ...status, color: "#888" }));
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const workspace = yield* service.workspace();
+    assert.deepEqual(
+      workspace.projectStatuses.map((status) => status.name),
+      ["Backlog", "Planned", "In Progress", "Paused", "On hold", "Completed", "Canceled"],
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer((_, request) => {
+        assert.equal(request.body._tag, "Uint8Array");
+        const query =
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+        return Response.json({
+          data: {
+            result: query.includes("result:organization")
+              ? { id: "org", name: "Workspace", urlKey: "workspace" }
+              : query.includes("result:viewer")
+                ? viewer
+                : {
+                    nodes: query.includes("projectStatuses(") ? statuses : [],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+          },
+        });
+      }),
+    ),
+  );
+});
+
 it("combines user, team, project and search filters without interpolating query text", () => {
   assert.deepEqual(
     linearIssueFilter(
