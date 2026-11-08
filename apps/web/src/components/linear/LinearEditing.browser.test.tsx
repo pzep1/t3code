@@ -1,4 +1,8 @@
-import { EnvironmentId, type LinearIssueDetail } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type LinearIssueDetail,
+  type LinearProjectDetail,
+} from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { expect, it, vi } from "vite-plus/test";
@@ -14,6 +18,8 @@ vi.mock("../../state/linear", () => ({
     teamContext: () => "context",
     issue: () => "issue",
     comments: () => null,
+    projects: () => "projects",
+    project: () => "project",
   },
 }));
 vi.mock("../../state/query", () => ({
@@ -25,7 +31,9 @@ vi.mock("../../state/query", () => ({
           ? { states: [], labels: [], cycles: [], projects: [] }
           : query === "issue"
             ? longIssue
-            : null,
+            : query === "project"
+              ? project
+              : null,
     error: null,
     isPending: false,
     refresh: () => {},
@@ -47,6 +55,7 @@ vi.mock("./LinearControls", () => ({
 
 import { LinearDocuments } from "./LinearDocuments";
 import { LinearIssuePanel } from "./LinearIssuePanel";
+import { LinearProjects } from "./LinearProjects";
 
 const environmentId = EnvironmentId.make("remote");
 const workspace = {
@@ -87,6 +96,19 @@ const longIssue: LinearIssueDetail = {
   inverseRelations: { nodes: [] },
 };
 const uploaded = AsyncResult.success({ assetUrl: "https://uploads.linear.app/proof.txt" });
+const project: typeof LinearProjectDetail.Type = {
+  id: "project",
+  name: "Release plan",
+  description: "Project summary",
+  content: "Project overview",
+  url: "https://linear.app/test/project/release-plan",
+  status: { id: "planned", name: "Planned", type: "planned", color: "#888" },
+  lead: null,
+  startDate: null,
+  targetDate: null,
+  documents: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+  projectMilestones: { nodes: [] },
+};
 function pendingUpload() {
   let complete!: (result: typeof uploaded) => void;
   commands.upload.mockReset().mockReturnValue(
@@ -197,4 +219,31 @@ it("starts work when an emoji straddles the prompt limit", async () => {
   const prompt = new URLSearchParams(screen.router!.state.location.searchStr).get("prompt");
   expect(prompt).toContain("TEAM-1: Task");
   expect(prompt!.length).toBeLessThanOrEqual(8000);
+});
+
+it("closes the saved project editor without duplicating project sections", async () => {
+  const mutate = vi.fn().mockResolvedValue({ success: true, id: "project" });
+  await using screen = await render(
+    <LinearProjects
+      environmentId={environmentId}
+      search={{ view: "projects", team: "team", project: "project" }}
+      workspace={workspace}
+      change={vi.fn()}
+      mutate={mutate}
+      canWrite
+    />,
+  );
+  await screen.getByRole("button", { name: "Edit project" }).click();
+  await screen.getByLabelText("Project name").fill("Updated release plan");
+  await screen.getByRole("button", { name: "Save project" }).click();
+  expect(mutate).toHaveBeenCalledWith({
+    kind: "projectUpdate",
+    id: "project",
+    input: { name: "Updated release plan" },
+  });
+  await expect.element(screen.getByLabelText("Project name")).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("heading", { name: "Milestones", exact: true }))
+    .toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "New document" })).toBeVisible();
 });

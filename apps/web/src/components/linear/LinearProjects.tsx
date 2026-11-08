@@ -79,7 +79,7 @@ export function LinearProjects({
               </div>
               {editing ? (
                 <ProjectEditor
-                  key={project.data.id}
+                  key={`editor:${project.data.id}`}
                   project={project.data}
                   workspace={workspace}
                   teamId={search.team}
@@ -104,13 +104,13 @@ export function LinearProjects({
                 Open project issues
               </Button>
               <ProjectMilestones
-                key={project.data.id}
+                key={`milestones:${project.data.id}`}
                 project={project.data}
                 mutate={mutate}
                 canWrite={canWrite}
               />
               <LinearDocuments
-                key={project.data.id}
+                key={`documents:${project.data.id}`}
                 environmentId={environmentId}
                 projectId={project.data.id}
                 search={search}

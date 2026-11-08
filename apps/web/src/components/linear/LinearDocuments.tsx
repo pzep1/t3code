@@ -57,7 +57,11 @@ export function LinearDocuments({
         <div className="flex flex-col gap-4 p-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              {search.team ? "Team documents" : "Workspace documents"}
+              {projectId
+                ? "Project documents"
+                : search.team
+                  ? "Team documents"
+                  : "Workspace documents"}
             </p>
             <Button
               size="sm"
