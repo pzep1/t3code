@@ -1,8 +1,7 @@
 import { LinearUpload, linearFileMarkdown } from "./LinearUpload";
 import type { EnvironmentId, LinearIssueDetail, LinearWorkspace } from "@t3tools/contracts";
 import { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
-import { XIcon, CopyIcon, PlayIcon } from "lucide-react";
+import { XIcon, CopyIcon } from "lucide-react";
 import { linearEnvironment } from "../../state/linear";
 import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";
@@ -10,6 +9,7 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { LinearSelect, LinearMessage, LinearMarkdown, LinearPager } from "./LinearControls";
 import type { LinearMutate } from "./linearTypes";
+import { LinearStartWork } from "./LinearStartWork";
 
 type Workspace = typeof LinearWorkspace.Type;
 export function LinearIssuePanel({
@@ -43,19 +43,11 @@ export function LinearIssuePanel({
   const refresh = detail.refresh;
   const [editing, setEditing] = useState(false);
   const [copied, setCopied] = useState(false);
-  const navigate = useNavigate();
   const issue = detail.data;
   const issueTeam = issue?.team.id ?? teamId;
   const context = useEnvironmentQuery(
     issueTeam ? linearEnvironment.teamContext({ environmentId, input: { id: issueTeam } }) : null,
   );
-  const startWork = () => {
-    if (!issue) return;
-    const prompt = `Work on Linear issue ${issue.identifier}: ${issue.title}\n${issue.url}\n\n${issue.description ?? ""}\n\nRead the issue and its discussion before starting. Keep the issue updated as work progresses.`;
-    void navigate({
-      href: `/new?prompt=${encodeURIComponent(prompt.slice(0, 8000).replace(/[\uD800-\uDBFF]$/, ""))}`,
-    });
-  };
   return (
     <div className="flex flex-col gap-5 p-5">
       <div className="flex items-center gap-2">
@@ -75,10 +67,7 @@ export function LinearIssuePanel({
               <CopyIcon className="size-4" />
               {copied ? "Copied" : "Copy link"}
             </Button>
-            <Button size="sm" variant="outline" onClick={startWork}>
-              <PlayIcon className="size-4" />
-              Start work
-            </Button>
+            <LinearStartWork environmentId={environmentId} issue={issue} />
           </>
         )}
         <Button size="sm" variant="ghost" aria-label="Close issue" onClick={onClose}>

@@ -1,15 +1,27 @@
 import {
   EnvironmentId,
+  ProjectId,
   type LinearIssueDetail,
   type LinearProjectDetail,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 
-const commands = vi.hoisted(() => ({ upload: vi.fn() }));
+const commands = vi.hoisted(() => ({ upload: vi.fn(), newThread: vi.fn() }));
+vi.mock("../../hooks/useHandleNewThread", () => ({
+  useNewThreadHandler: () => commands.newThread,
+}));
+vi.mock("../../state/entities", () => ({
+  useProjects: () => [{ id: ProjectId.make("t3-project"), environmentId, title: "Repository" }],
+}));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({
+    environments: [{ environmentId, label: "Remote", connection: { phase: "connected" } }],
+  }),
+}));
 vi.mock("../../state/linear", () => ({
   linearEnvironment: {
     upload: { permissionAtom: () => null },
@@ -198,7 +210,8 @@ it.each(["document", "issue"] as const)(
   },
 );
 
-it("starts work when an emoji straddles the prompt limit", async () => {
+it("starts work in a T3 project when an emoji straddles the prompt limit", async () => {
+  commands.newThread.mockReset().mockResolvedValue({ draftId: "draft", threadId: "thread" });
   await using screen = await render(
     <LinearIssuePanel
       environmentId={environmentId}
@@ -215,10 +228,17 @@ it("starts work when an emoji straddles the prompt limit", async () => {
     />,
   );
   await screen.getByRole("button", { name: "Start work" }).click();
-  await expect.poll(() => screen.router!.state.location.pathname).toBe("/new");
-  const prompt = new URLSearchParams(screen.router!.state.location.searchStr).get("prompt");
+  await act(() => page.getByRole("button", { name: "Open thread", exact: true }).element().focus());
+  await userEvent.keyboard("{Enter}");
+  expect(commands.newThread).toHaveBeenCalledOnce();
+  expect(commands.newThread.mock.calls[0]![0]).toEqual({
+    environmentId,
+    projectId: "t3-project",
+  });
+  const prompt: string = commands.newThread.mock.calls[0]![1].prompt;
   expect(prompt).toContain("TEAM-1: Task");
-  expect(prompt!.length).toBeLessThanOrEqual(8000);
+  expect(prompt.length).toBeLessThanOrEqual(8000);
+  expect(encodeURIComponent(prompt)).toContain("TEAM-1");
 });
 
 it("closes the saved project editor without duplicating project sections", async () => {

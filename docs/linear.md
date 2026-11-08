@@ -1,6 +1,6 @@
 # Linear in T3 Code
 
-Open **Linear** in the sidebar or command palette. It connects directly to Linear’s GraphQL API from your T3 server. The desktop and web workspace includes inbox, assigned/created/subscribed issues, triage, search, lists and boards, projects, milestones, cycles, documents, comments, subissues, relationships and private attachments. **Start work** opens a new T3 task with the issue’s identifier, URL and description.
+Open **Linear** in the sidebar or command palette. It connects directly to Linear’s GraphQL API from your T3 server. The desktop and web workspace includes inbox, assigned/created/subscribed issues, triage, search, lists and boards, projects, milestones, cycles, documents, comments, subissues, relationships and private attachments. **Start work** lets you choose a connected T3 project and opens a thread draft with the issue’s identifier, URL and description.
 
 ## Connect
 
