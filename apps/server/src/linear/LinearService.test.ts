@@ -1,0 +1,466 @@
+import { assert, it } from "@effect/vitest";
+import * as NodeBuffer from "node:buffer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ServerConfig from "../config.ts";
+import * as Linear from "./LinearService.ts";
+import { linearIssueFilter } from "./linearOperations.ts";
+
+const viewer = { id: "viewer", name: "Panos", avatarUrl: null };
+function testLayer(
+  answer: (
+    authorization: string | undefined,
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Response,
+) {
+  return Linear.layer.pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "linear-test-" })),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(Layer.succeed(HostProcess.Environment, { LINEAR_API_KEY: "environment-secret" })),
+    Layer.provide(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() =>
+            HttpClientResponse.fromWeb(request, answer(request.headers.authorization, request)),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+it.effect("times out a stalled response body and releases the credential lock", () => {
+  const reading = Deferred.makeUnsafe<void>();
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const saving = yield* service
+      .configure({ kind: "save", apiKey: "replacement-secret" })
+      .pipe(Effect.flip, Effect.forkChild);
+    yield* Deferred.await(reading);
+    yield* TestClock.adjust("30 seconds");
+    assert.isDefined(saving.pollUnsafe(), "body consumption must share the request deadline");
+    assert.equal((yield* Fiber.join(saving)).reason, "network");
+    assert.equal(yield* fs.exists(`${config.secretsDir}/linear.json`), false);
+    assert.deepEqual(yield* service.configure({ kind: "save", apiKey: "working-secret" }), {
+      connected: true,
+      source: "saved",
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() =>
+        ++calls === 1
+          ? new Response(
+              new ReadableStream({
+                pull() {
+                  Deferred.doneUnsafe(reading, Effect.void);
+                },
+              }),
+            )
+          : Response.json({ data: { result: viewer } }),
+      ),
+    ),
+  );
+});
+
+it.effect(
+  "validates a replacement key before persisting it, disconnects without falling back, and restores the environment key",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* Linear.LinearService;
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      assert.deepEqual(yield* service.connection(), { connected: true, source: "environment" });
+      const rejected = yield* service
+        .configure({ kind: "save", apiKey: "bad-secret" })
+        .pipe(Effect.flip);
+      assert.equal(rejected.reason, "unauthorized");
+      assert.equal(yield* fs.exists(`${config.secretsDir}/linear.json`), false);
+      assert.deepEqual(yield* service.configure({ kind: "save", apiKey: "saved-secret" }), {
+        connected: true,
+        source: "saved",
+      });
+      const info = yield* fs.stat(`${config.secretsDir}/linear.json`);
+      assert.equal(info.mode & 0o777, 0o600);
+      assert.deepEqual(yield* service.configure({ kind: "disconnect" }), {
+        connected: false,
+        source: "disconnected",
+      });
+      assert.equal(
+        (yield* service.issue({ id: "issue" }).pipe(Effect.flip)).reason,
+        "disconnected",
+      );
+      assert.deepEqual(yield* service.configure({ kind: "environment" }), {
+        connected: true,
+        source: "environment",
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        testLayer((authorization) =>
+          authorization === "bad-secret"
+            ? Response.json({}, { status: 401 })
+            : Response.json({ data: { result: viewer } }),
+        ),
+      ),
+    ),
+);
+
+it.effect("treats partial GraphQL answers as failures and never retries a write", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const result = yield* service
+      .mutate({ kind: "commentCreate", input: { issueId: "issue", body: "hello" } })
+      .pipe(Effect.flip);
+    assert.equal(result.reason, "rate-limit");
+    assert.equal(calls, 1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() => {
+        calls++;
+        return Response.json({
+          data: { result: { success: true, entity: { id: "created" } } },
+          errors: [{ extensions: { code: "RATELIMITED" } }],
+        });
+      }),
+    ),
+  );
+});
+
+it.effect("rejects unsuccessful mutations and malformed API answers", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    assert.equal(
+      (yield* service.mutate({ kind: "issueArchive", id: "issue" }).pipe(Effect.flip)).reason,
+      "api",
+    );
+    assert.equal(
+      (yield* service.issue({ id: "issue" }).pipe(Effect.flip)).reason,
+      "invalid-response",
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() =>
+        Response.json({ data: { result: ++calls === 1 ? { success: false } : { id: "issue" } } }),
+      ),
+    ),
+  );
+});
+
+it.effect("loads every directory page and rejects a repeated cursor", () => {
+  let calls = 0;
+  const state = { id: "state", name: "Todo", color: "#888", type: "unstarted", position: 1 };
+  const label = { id: "label", name: "Bug", color: "#f00" };
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const context = yield* service.teamContext({ id: "team" });
+    assert.equal(context.states.length, 2);
+    assert.equal(context.labels.length, 1);
+    assert.equal(calls, 5);
+    assert.equal(
+      (yield* service.teamContext({ id: "team" }).pipe(Effect.flip)).reason,
+      "invalid-response",
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() => {
+        calls++;
+        const nodes = calls <= 2 || calls > 5 ? [state] : calls === 3 ? [label] : [];
+        return Response.json({
+          data: {
+            result: {
+              items: {
+                nodes,
+                pageInfo: { hasNextPage: calls === 1 || calls > 5, endCursor: "cursor" },
+              },
+            },
+          },
+        });
+      }),
+    ),
+  );
+});
+
+it.effect("orders workflow columns by group and configured position across directory pages", () => {
+  let calls = 0;
+  const states = [
+    { id: "review", name: "In Review", type: "started", position: 1002 },
+    { id: "done", name: "Done", type: "completed", position: 3 },
+    { id: "progress", name: "In Progress", type: "started", position: 2 },
+    { id: "todo", name: "Todo", type: "unstarted", position: 1 },
+  ].map((state) => ({ ...state, color: "#888" }));
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const context = yield* service.teamContext({ id: "team" });
+    assert.deepEqual(
+      context.states.map((state) => state.name),
+      ["Todo", "In Progress", "In Review", "Done"],
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() => {
+        calls++;
+        return Response.json({
+          data: {
+            result: {
+              items: {
+                nodes: calls === 1 ? states.slice(0, 2) : calls === 2 ? states.slice(2) : [],
+                pageInfo: { hasNextPage: calls === 1, endCursor: "cursor" },
+              },
+            },
+          },
+        });
+      }),
+    ),
+  );
+});
+
+it.effect("keeps paused project statuses between active and completed groups", () => {
+  const statuses = [
+    { id: "done", name: "Completed", type: "completed", position: 0 },
+    { id: "paused-later", name: "On hold", type: "paused", position: 1000 },
+    { id: "canceled", name: "Canceled", type: "canceled", position: 0 },
+    { id: "started", name: "In Progress", type: "started", position: 0 },
+    { id: "paused", name: "Paused", type: "paused", position: 0 },
+    { id: "planned", name: "Planned", type: "planned", position: 0 },
+    { id: "backlog", name: "Backlog", type: "backlog", position: 0 },
+  ].map((status) => ({ ...status, color: "#888" }));
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const workspace = yield* service.workspace();
+    assert.deepEqual(
+      workspace.projectStatuses.map((status) => status.name),
+      ["Backlog", "Planned", "In Progress", "Paused", "On hold", "Completed", "Canceled"],
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer((_, request) => {
+        assert.equal(request.body._tag, "Uint8Array");
+        const query =
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+        return Response.json({
+          data: {
+            result: query.includes("result:organization")
+              ? { id: "org", name: "Workspace", urlKey: "workspace" }
+              : query.includes("result:viewer")
+                ? viewer
+                : {
+                    nodes: query.includes("projectStatuses(") ? statuses : [],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+          },
+        });
+      }),
+    ),
+  );
+});
+
+it.effect("includes trashed documents while preserving the library scope and cursor", () =>
+  Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const page = yield* service.documents({
+      projectId: "project",
+      teamId: "team",
+      after: "cursor",
+      includeArchived: true,
+    });
+    assert.equal(page.nodes[0]?.trashed, true);
+    assert.equal(page.pageInfo.endCursor, "next");
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer((_, request) => {
+        assert.equal(request.body._tag, "Uint8Array");
+        if (request.body._tag === "Uint8Array") {
+          const payload = JSON.parse(new TextDecoder().decode(request.body.body));
+          assert.include(payload.query, "includeArchived:$archived");
+          assert.deepEqual(payload.variables, {
+            after: "cursor",
+            archived: true,
+            filter: { team: { id: { eq: "team" } }, project: { id: { eq: "project" } } },
+          });
+        }
+        return Response.json({
+          data: {
+            result: {
+              nodes: [{ id: "doc", title: "Plan", trashed: true, updatedAt: "today", url: "url" }],
+              pageInfo: { hasNextPage: true, endCursor: "next" },
+            },
+          },
+        });
+      }),
+    ),
+  ),
+);
+
+it("combines user, team, project and search filters without interpolating query text", () => {
+  assert.deepEqual(
+    linearIssueFilter(
+      { view: "mine", teamId: "team", projectId: "project", stateId: "state", query: 'text"}' },
+      "viewer",
+    ),
+    {
+      team: { id: { eq: "team" } },
+      project: { id: { eq: "project" } },
+      assignee: { id: { eq: "viewer" } },
+      state: { id: { eq: "state" } },
+    },
+  );
+  assert.deepEqual(linearIssueFilter({ view: "active" }, "viewer"), {
+    state: { type: { in: ["unstarted", "started"] } },
+  });
+});
+
+it.effect(
+  "uploads private raw bytes with signed storage headers and never forwards the API key",
+  () => {
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    return Effect.gen(function* () {
+      const service = yield* Linear.LinearService;
+      assert.deepEqual(
+        yield* service.upload({ filename: "proof.txt", contentType: "text/plain", base64: "aGk=" }),
+        { assetUrl: "https://uploads.linear.app/proof.txt" },
+      );
+      assert.equal(requests.length, 2);
+      assert.equal(requests[0]?.headers.authorization, "environment-secret");
+      assert.equal(requests[1]?.method, "PUT");
+      assert.equal(requests[1]?.headers.authorization, undefined);
+      assert.equal(requests[1]?.headers["x-upload-proof"], "signed");
+      const body = requests[1]?.body;
+      assert.equal(body?._tag, "Uint8Array");
+      if (body?._tag === "Uint8Array") assert.equal(new TextDecoder().decode(body.body), "hi");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        testLayer((_authorization, request) => {
+          requests.push(request);
+          return request.method === "POST"
+            ? Response.json({
+                data: {
+                  result: {
+                    success: true,
+                    uploadFile: {
+                      uploadUrl: "https://storage.example.test/signed",
+                      assetUrl: "https://uploads.linear.app/proof.txt",
+                      headers: [{ key: "x-upload-proof", value: "signed" }],
+                    },
+                  },
+                },
+              })
+            : new Response(null, { status: 200 });
+        }),
+      ),
+    );
+  },
+);
+it.effect("rejects malformed upload bytes before requesting storage", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const error = yield* service
+      .upload({ filename: "proof.txt", contentType: "text/plain", base64: "not-base64" })
+      .pipe(Effect.flip);
+    assert.equal(error.reason, "invalid-response");
+    assert.equal(calls, 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() => {
+        calls++;
+        return new Response(null, { status: 500 });
+      }),
+    ),
+  );
+});
+
+it.effect.each([4, 8])("uploads a valid %s MiB file without a validator defect", (mebibytes) => {
+  const size = mebibytes * 1024 * 1024;
+  const bytes = NodeBuffer.Buffer.alloc(size, 42);
+  let ticketRequested = false;
+  let uploaded = false;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    yield* service.upload({
+      filename: "proof.bin",
+      contentType: "application/octet-stream",
+      base64: bytes.toString("base64"),
+    });
+    assert.isTrue(ticketRequested);
+    assert.isTrue(uploaded);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer((_authorization, request) => {
+        if (request.method === "POST") {
+          ticketRequested = true;
+          assert.equal(request.body._tag, "Uint8Array");
+          if (request.body._tag === "Uint8Array") {
+            const payload = JSON.parse(new TextDecoder().decode(request.body.body));
+            assert.equal(payload.variables.size, size);
+          }
+          return Response.json({
+            data: {
+              result: {
+                success: true,
+                uploadFile: {
+                  uploadUrl: "https://storage.example.test/signed",
+                  assetUrl: "https://uploads.linear.app/proof.bin",
+                  headers: [],
+                },
+              },
+            },
+          });
+        }
+        uploaded = true;
+        assert.equal(request.body._tag, "Uint8Array");
+        if (request.body._tag === "Uint8Array") {
+          assert.equal(request.body.body.length, size);
+          assert.deepEqual(request.body.body, bytes);
+        }
+        return new Response(null, { status: 200 });
+      }),
+    ),
+  );
+});
+
+it.effect("rejects decoded uploads over 8 MiB before requesting storage", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const error = yield* service
+      .upload({
+        filename: "too-large.bin",
+        contentType: "application/octet-stream",
+        base64: NodeBuffer.Buffer.alloc(8 * 1024 * 1024 + 1, 42).toString("base64"),
+      })
+      .pipe(Effect.flip);
+    assert.equal(error.reason, "invalid-response");
+    assert.equal(calls, 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() => {
+        calls++;
+        return new Response(null, { status: 500 });
+      }),
+    ),
+  );
+});
