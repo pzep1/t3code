@@ -181,8 +181,10 @@ export function LinearDocuments({
             </form>
           ) : selected.data ? (
             <article className="flex flex-col gap-4 rounded-lg border p-4">
-              <div className="flex items-center gap-3">
-                <h2 className="flex-1 text-xl font-semibold">{selected.data.title}</h2>
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="min-w-0 flex-1 text-xl font-semibold max-sm:basis-full">
+                  {selected.data.title}
+                </h2>
                 <Button
                   size="sm"
                   variant="outline"

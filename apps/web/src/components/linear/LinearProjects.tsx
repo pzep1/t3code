@@ -57,8 +57,8 @@ export function LinearProjects({
           ) : null}
           {search.project && project.data ? (
             <>
-              <div className="flex items-start gap-3">
-                <div className="flex-1">
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 flex-1 max-sm:basis-full">
                   <h2 className="text-xl font-semibold">{project.data.name}</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {project.data.status.name} · {project.data.lead?.name ?? "No lead"}
@@ -354,8 +354,8 @@ function ProjectMilestones({
       </div>
       {project.projectMilestones.nodes.map((item) => (
         <div className="rounded border p-3" key={item.id}>
-          <div className="flex items-center gap-2">
-            <strong className="flex-1 text-sm">{item.name}</strong>
+          <div className="flex flex-wrap items-center gap-2">
+            <strong className="min-w-0 flex-1 text-sm max-sm:basis-full">{item.name}</strong>
             <span className="text-xs text-muted-foreground">{item.targetDate}</span>
             <Button
               size="sm"

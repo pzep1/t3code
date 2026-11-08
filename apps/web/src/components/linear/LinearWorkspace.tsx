@@ -9,6 +9,7 @@ import { CircleDotIcon, RefreshCwIcon, PlusIcon, Settings2Icon } from "lucide-re
 import { linearEnvironment } from "../../state/linear";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
@@ -80,7 +81,9 @@ export function LinearWorkspace({ environmentId }: { environmentId: EnvironmentI
   const title = views.find((view) => view.id === search.view)?.name ?? "Linear";
   return (
     <>
-      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b px-5 py-3">
+      <header
+        className={`flex shrink-0 flex-wrap items-center gap-3 border-b px-5 py-3 ${COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS}`}
+      >
         <CircleDotIcon className="size-5 text-primary" />
         <strong>Linear</strong>
         <span className="text-sm text-muted-foreground">{workspace.data?.organization.name}</span>
@@ -188,7 +191,7 @@ export function LinearWorkspace({ environmentId }: { environmentId: EnvironmentI
             </div>
           </nav>
           <main
-            className={`flex min-w-0 flex-1 flex-col ${search.issue || creating ? "max-md:hidden" : ""}`}
+            className={`flex min-h-0 min-w-0 flex-1 flex-col ${search.issue || creating ? "max-md:hidden" : ""}`}
           >
             <div className="flex items-center gap-2 border-b px-5 py-4">
               <h1 className="font-semibold">{title}</h1>
